@@ -64,33 +64,34 @@ function Get-DiscordTargets {
     )
     foreach ($root in $roots) {
         if (-not (Test-Path -LiteralPath $root.Path)) { continue }
-        $apps = Get-ChildItem -LiteralPath $root.Path -Directory -Filter "app-*" -ErrorAction SilentlyContinue
-        foreach ($app in $apps) {
-            $version = $null
-            if ($app.Name -match '^app-([0-9]+(?:\.[0-9]+){1,3})$') { $version = $matches[1] }
-            if (-not $version) { continue }
-            $modules = Join-Path $app.FullName "modules"
-            if (-not (Test-Path -LiteralPath $modules)) { continue }
-            $voiceModules = Get-ChildItem -LiteralPath $modules -Directory -Filter "discord_voice*" -ErrorAction SilentlyContinue
-            foreach ($vm in $voiceModules) {
-                $nested = Join-Path $vm.FullName "discord_voice"
-                $voiceDir = if (Test-Path -LiteralPath $nested) { $nested } else { $vm.FullName }
-                $node = Join-Path $voiceDir "discord_voice.node"
-                if (Test-Path -LiteralPath $node -PathType Leaf) {
-                    [pscustomobject]@{
-                        ClientName = $root.Name
-                        Root = $root.Path
-                        AppPath = $app.FullName
-                        AppVersion = $version
-                        VoiceDir = $voiceDir
-                        NodePath = $node
-                    }
+        $apps = @(Get-ChildItem -LiteralPath $root.Path -Directory -Filter "app-*" -ErrorAction SilentlyContinue | Where-Object {
+            $_.Name -match '^app-([0-9]+(?:\.[0-9]+){1,3})$'
+        } | Sort-Object { try { [version]($_.Name.Substring(4)) } catch { [version]"0.0" } } -Descending)
+        if ($apps.Count -eq 0) { continue }
+        # Only inspect the newest app-* folder. This lets a new Discord app folder
+        # be compared against the prior version for this client installation.
+        $app = $apps[0]
+        $version = $app.Name.Substring(4)
+        $modules = Join-Path $app.FullName "modules"
+        if (-not (Test-Path -LiteralPath $modules)) { continue }
+        $voiceModules = Get-ChildItem -LiteralPath $modules -Directory -Filter "discord_voice*" -ErrorAction SilentlyContinue
+        foreach ($vm in $voiceModules) {
+            $nested = Join-Path $vm.FullName "discord_voice"
+            $voiceDir = if (Test-Path -LiteralPath $nested) { $nested } else { $vm.FullName }
+            $node = Join-Path $voiceDir "discord_voice.node"
+            if (Test-Path -LiteralPath $node -PathType Leaf) {
+                [pscustomobject]@{
+                    ClientName = $root.Name
+                    Root = $root.Path
+                    AppPath = $app.FullName
+                    AppVersion = $version
+                    VoiceDir = $voiceDir
+                    NodePath = $node
                 }
             }
         }
     }
 }
-
 function Get-Sha256 {
     param([string]$Path)
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -126,7 +127,8 @@ function Restore-VoiceDirectory {
     Start-Sleep -Seconds 2
     if (-not (Test-Path -LiteralPath $BackupPath)) { throw "Safety backup is missing: $BackupPath" }
     if (Test-Path -LiteralPath $VoiceDir) { Remove-Item -LiteralPath $VoiceDir -Recurse -Force }
-    Copy-Item -LiteralPath $BackupPath -Destination $VoiceDir -Recurse -Force
+    New-Item -ItemType Directory -Path $VoiceDir -Force | Out-Null
+    Copy-Item -Path (Join-Path $BackupPath "*") -Destination $VoiceDir -Recurse -Force
 }
 
 function Invoke-VerifiedPatch {
@@ -139,13 +141,18 @@ function Invoke-VerifiedPatch {
         Write-Log "Manifest profile has invalid SHA-256 values; refusing to patch." "ERROR"
         return $false
     }
-    $fixer = Join-Path $PSScriptRoot "DiscordVoiceFixer.ps1"
-    if (-not (Test-Path -LiteralPath $fixer)) {
-        Write-Log "DiscordVoiceFixer.ps1 was not found beside the monitor; refusing to patch." "ERROR"
+    $uri = [uri]([string]$Profile.patchedNodeUrl)
+    if ($uri.Scheme -ne "https" -or $uri.Host -ne "raw.githubusercontent.com") {
+        Write-Log "patchedNodeUrl must be an HTTPS raw.githubusercontent.com URL; refusing to patch." "ERROR"
         return $false
     }
     if (Test-DiscordRunning) {
         Write-Log "Discord is still running; patch postponed until it is closed." "WARN"
+        return $false
+    }
+    $currentHash = Get-Sha256 -Path $Target.NodePath
+    if ($currentHash -ne ([string]$Profile.sourceSha256).ToLowerInvariant()) {
+        Write-Log "Source binary changed after profile matching; refusing to patch." "ERROR"
         return $false
     }
 
@@ -155,19 +162,20 @@ function Invoke-VerifiedPatch {
     Copy-Item -LiteralPath $Target.VoiceDir -Destination $backupPath -Recurse -Force
     Write-Log "Created safety backup: $backupPath"
 
+    $downloadPath = Join-Path $script:DataRoot ("discord_voice.node.download-" + [guid]::NewGuid().ToString("N"))
+    $replacePath = Join-Path $Target.VoiceDir ("discord_voice.node.new-" + [guid]::NewGuid().ToString("N"))
     try {
-        if ([string]::IsNullOrWhiteSpace([string]$Profile.fixerClientName)) { throw "Manifest fixerClientName is missing." }
-        $clientArg = [string]$Profile.fixerClientName
-        $arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $fixer + '" -Silent -FixClient "' + $clientArg.Replace('"','\"') + '"'
-        Write-Log "Starting verified Voice Fixer for $($Target.ClientName) app-$($Target.AppVersion)."
-        $process = Start-Process -FilePath "powershell.exe" -ArgumentList $arguments -Wait -PassThru -WindowStyle Hidden
-        if ($process.ExitCode -ne 0) { throw "Voice Fixer exited with code $($process.ExitCode)." }
-
-        $node = Join-Path $Target.VoiceDir "discord_voice.node"
-        if (-not (Test-Path -LiteralPath $node)) { throw "Patched discord_voice.node was not found after installation." }
-        $actual = Get-Sha256 -Path $node
-        if ($actual -ne ([string]$Profile.patchedSha256).ToLowerInvariant()) {
-            throw "Patched binary SHA-256 mismatch. Expected $($Profile.patchedSha256), received $actual."
+        Invoke-WebRequest -Uri $uri.AbsoluteUri -OutFile $downloadPath -TimeoutSec 90 -UseBasicParsing
+        $downloadHash = Get-Sha256 -Path $downloadPath
+        if ($downloadHash -ne ([string]$Profile.patchedSha256).ToLowerInvariant()) {
+            throw "Downloaded patched binary SHA-256 mismatch. Expected $($Profile.patchedSha256), received $downloadHash."
+        }
+        if (Test-DiscordRunning) { throw "Discord restarted during patch operation; aborting." }
+        Copy-Item -LiteralPath $downloadPath -Destination $replacePath -Force
+        Move-Item -LiteralPath $replacePath -Destination $Target.NodePath -Force
+        $installedHash = Get-Sha256 -Path $Target.NodePath
+        if ($installedHash -ne ([string]$Profile.patchedSha256).ToLowerInvariant()) {
+            throw "Installed binary SHA-256 mismatch. Expected $($Profile.patchedSha256), received $installedHash."
         }
         Write-Log "Verified patch installed successfully for $($Target.ClientName) $($Target.AppVersion)." "OK"
         return $true
@@ -180,9 +188,11 @@ function Invoke-VerifiedPatch {
             Write-Log "CRITICAL: automatic restore failed: $($_.Exception.Message). Backup remains at $backupPath" "CRITICAL"
         }
         return $false
+    } finally {
+        Remove-Item -LiteralPath $downloadPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $replacePath -Force -ErrorAction SilentlyContinue
     }
 }
-
 function Invoke-Scan {
     $state = Get-State
     $manifest = Get-Manifest
@@ -194,7 +204,7 @@ function Invoke-Scan {
                 continue
             }
             $hash = Get-Sha256 -Path $target.NodePath
-            $key = $target.NodePath.ToLowerInvariant()
+            $key = $target.Root.ToLowerInvariant()
             $previous = $state[$key]
             if (-not $previous) {
                 $state[$key] = @{ sha256 = $hash; appVersion = $target.AppVersion; firstSeenUtc = (Get-Date).ToUniversalTime().ToString("o") }
