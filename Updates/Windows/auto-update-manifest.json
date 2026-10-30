@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "description": "Exact-build allowlist for the Windows Discord Stereo Auto Updater. Empty by default: no automatic patch is attempted until a build has been validated and its source/patched SHA-256 values are published.",
+  "builds": []
+}
