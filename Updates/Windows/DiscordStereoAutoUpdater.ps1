@@ -27,7 +27,12 @@ function Write-Log {
 
 function Get-State {
     if (Test-Path -LiteralPath $script:StatePath) {
-        try { return (Get-Content -LiteralPath $script:StatePath -Raw -Encoding UTF8 | ConvertFrom-Json -AsHashtable) } catch {}
+        try {
+            $parsed = Get-Content -LiteralPath $script:StatePath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $map = @{}
+            foreach ($property in $parsed.PSObject.Properties) { $map[$property.Name] = $property.Value }
+            return $map
+        } catch {}
     }
     return @{}
 }
@@ -211,7 +216,7 @@ function Invoke-Scan {
                 Write-Log "Baseline recorded: $($target.ClientName) app-$($target.AppVersion)."
                 continue
             }
-            if ($previous.sha256 -eq $hash -and $previous.appVersion -eq $target.AppVersion) { continue }
+            if ($previous.sha256 -eq $hash -and $previous.appVersion -eq $target.AppVersion -and -not $previous.pending) { continue }
 
             Write-Log "Discord update detected: $($target.ClientName) app-$($previous.appVersion) -> app-$($target.AppVersion)."
             $profile = @($manifest.builds | Where-Object {
