@@ -4,7 +4,7 @@ $source = $PSScriptRoot
 $destination = Join-Path $env:LOCALAPPDATA "DiscordStereoAutoUpdater"
 New-Item -ItemType Directory -Path $destination -Force | Out-Null
 
-$required = @("DiscordStereoAutoUpdater.ps1", "auto-update-manifest.json", "DiscordVoiceFixer.ps1")
+$required = @("DiscordStereoAutoUpdater.ps1", "auto-update-manifest.json")
 foreach ($file in $required) {
     $path = Join-Path $source $file
     if (-not (Test-Path -LiteralPath $path)) { throw "Required file is missing: $path" }
