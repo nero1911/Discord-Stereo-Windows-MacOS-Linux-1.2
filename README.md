@@ -74,6 +74,14 @@
 
 Drops pre-patched `discord_voice.node` (with backup). **No compiler.**
 
+### Automatic Windows update monitor (new)
+
+The Windows-only monitor can start automatically when you sign in and detect Discord voice-module updates. It checks the exact Discord app version and original binary SHA-256 before considering a patch, keeps a full backup, verifies the patched binary hash, and restores the backup if verification fails.
+
+**Important:** the build allowlist currently ships empty because the upstream patched-binary feed does not provide a verified original-to-patched build mapping. Until a profile is validated and added, the monitor only records detections and does not modify Discord.
+
+See [Windows Auto Updater setup and safety notes](Updates/Windows/AUTO-UPDATER.md).
+
 ### Quick steps
 
 1. Grab [`Stereo Installer.bat`](https://github.com/ProdHallow/Discord-Stereo-Windows-MacOS-Linux/raw/main/Updates/Windows/Stereo%20Installer.bat) from [`Updates/Windows/`](https://github.com/ProdHallow/Discord-Stereo-Windows-MacOS-Linux/tree/main/Updates/Windows).
