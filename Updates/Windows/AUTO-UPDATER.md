@@ -9,7 +9,7 @@ This folder contains the Windows-only background monitor for Discord Stereo Hub.
 - Waits for discord_voice.node to stop changing before hashing it.
 - Detects both Discord app-version changes and binary changes.
 - Applies a patch only when auto-update-manifest.json contains an exact match for the Discord app version and the original discord_voice.node SHA-256.
-- Makes a full voice-module backup before invoking the existing DiscordVoiceFixer.ps1 -Silent.
+- Makes a full voice-module backup before replacing only discord_voice.node. The existing interactive installer and its silent reinstall path are not invoked.
 - Verifies the resulting patched binary SHA-256. On mismatch or failure, restores the full voice-module backup.
 - Logs activity to %LOCALAPPDATA%\DiscordStereoAutoUpdater\monitor.log.
 
@@ -22,7 +22,8 @@ Therefore, the monitor and startup integration are implemented, but automatic pa
 A profile must contain:
 - appVersion: exact app-* folder version
 - sourceSha256: SHA-256 of the original Discord discord_voice.node
-- patchedSha256: SHA-256 expected after the existing Voice Fixer installs its payload
+- patchedSha256: SHA-256 expected for the exact patched discord_voice.node payload
+- patchedNodeUrl: HTTPS raw.githubusercontent.com URL for that exact patched binary
 - fixerClientName: client selector accepted by DiscordVoiceFixer.ps1
 - enabled: true only after the profile has been tested
 
@@ -36,7 +37,7 @@ Example (do not enable until the hashes have been measured and verified):
       "appVersion": "1.0.0000",
       "sourceSha256": "64-character-original-sha256",
       "patchedSha256": "64-character-patched-sha256",
-      "fixerClientName": "Discord",
+      "patchedNodeUrl": "https://raw.githubusercontent.com/owner/repo/commit/path/discord_voice.node",
       "enabled": false
     }
   ]
@@ -45,7 +46,7 @@ Example (do not enable until the hashes have been measured and verified):
 
 ## Install
 
-1. Place DiscordStereoAutoUpdater.ps1, auto-update-manifest.json, DiscordVoiceFixer.ps1, and Install-AutoUpdater.ps1 in the same folder.
+1. Place DiscordStereoAutoUpdater.ps1, auto-update-manifest.json, and Install-AutoUpdater.ps1 in the same folder.
 2. Run PowerShell as the current user:
 
 ~~~powershell
